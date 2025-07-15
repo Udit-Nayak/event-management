@@ -2,6 +2,7 @@ import { pool } from "../config/db.js";
 
 export const createEvent = async (req, res) => {
   const { title, datetime, location, capacity } = req.body;
+  const userId = req.user.userId;
 
   if (
     !title || typeof title !== "string" ||
@@ -14,9 +15,9 @@ export const createEvent = async (req, res) => {
 
   try {
     const result = await pool.query(
-      `INSERT INTO events (title, datetime, location, capacity)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [title, datetime, location, capacity]
+      `INSERT INTO events (title, datetime, location, capacity, created_by)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [title, datetime, location, capacity, userId]
     );
 
     res.status(201).json({
@@ -56,6 +57,76 @@ export const getEventDetails = async (req, res) => {
     });
   } catch (err) {
     console.error("getEventDetails error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+export const deleteEvent = async (req, res) => {
+  const eventId = req.params.id;
+  const userId = req.user.userId;
+
+  if (!Number(eventId)) {
+    return res.status(400).json({ error: "Invalid event ID" });
+  }
+
+  try {
+    const eventRes = await pool.query(`SELECT * FROM events WHERE id = $1`, [eventId]);
+    if (eventRes.rows.length === 0) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const event = eventRes.rows[0];
+    if (event.created_by !== userId) {
+      return res.status(403).json({ error: "You are not authorized to delete this event" });
+    }
+
+    await pool.query(`DELETE FROM events WHERE id = $1`, [eventId]);
+
+    res.status(200).json({ message: "Event deleted successfully" });
+  } catch (err) {
+    console.error("deleteEvent error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+export const updateEvent = async (req, res) => {
+  const eventId = req.params.id;
+  const userId = req.user.userId;
+  const { title, datetime, location, capacity } = req.body;
+
+  if (
+    !Number(eventId) ||
+    !title || typeof title !== "string" ||
+    !datetime || isNaN(new Date(datetime)) ||
+    !location || typeof location !== "string" ||
+    typeof capacity !== "number" || capacity <= 0 || capacity > 1000
+  ) {
+    return res.status(400).json({ error: "Invalid input data for event update" });
+  }
+
+  try {
+    const eventRes = await pool.query(`SELECT * FROM events WHERE id = $1`, [eventId]);
+    if (eventRes.rows.length === 0) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const event = eventRes.rows[0];
+    if (event.created_by !== userId) {
+      return res.status(403).json({ error: "You are not authorized to update this event" });
+    }
+
+    const updateRes = await pool.query(
+      `UPDATE events SET title = $1, datetime = $2, location = $3, capacity = $4
+       WHERE id = $5 RETURNING *`,
+      [title, datetime, location, capacity, eventId]
+    );
+
+    res.status(200).json({
+      message: "Event updated successfully",
+      event: updateRes.rows[0]
+    });
+  } catch (err) {
+    console.error("updateEvent error:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -115,7 +186,6 @@ export const registerUserToEvent = async (req, res) => {
   }
 };
 
-
 export const cancelRegistration = async (req, res) => {
   const { id: eventId, userId } = req.params;
 
@@ -144,7 +214,6 @@ export const cancelRegistration = async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 };
-
 
 export const getUpcomingEvents = async (req, res) => {
   try {
